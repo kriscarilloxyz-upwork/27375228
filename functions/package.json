@@ -23,6 +23,7 @@
     "firebase-functions": "^3.11.0",
     "helmet": "^4.6.0",
     "moment": "^2.29.1",
+    "moment-timezone": "^0.5.33",
     "morgan": "^1.10.0"
   },
   "devDependencies": {

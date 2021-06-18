@@ -1,13 +1,16 @@
 require('dotenv').config()
 const cors = require('cors')
-const moment = require('moment')
 const morgan = require('morgan')
 const helmet = require('helmet')
 const Bitkub = require('bitkub')
 const express = require('express')
+const moment = require('moment-timezone')
 const functions = require("firebase-functions")
 const sheets = require('array-to-google-sheets')
 const Binance = require('binance-api-node').default
+
+// Timezone
+moment.tz.setDefault('Asia/Ho_Chi_Minh')
 
 // Binance client
 const clientBinance = new Binance({
@@ -41,8 +44,8 @@ app.use(cors({
 
 function sortByDate (arr) {
     return arr.sort(function compare (a, b) {
-        var dateA = moment(`${a[0]} ${a[1]}`, 'MM/DD/YYYY HH:mm:ss A');
-        var dateB = moment(`${b[0]} ${b[1]}`, 'MM/DD/YYYY HH:mm:ss A');
+        var dateA = moment(`${a[0]} ${a[1]}`, 'DD/MM/YYYY HH:mm:ss A');
+        var dateB = moment(`${b[0]} ${b[1]}`, 'DD/MM/YYYY HH:mm:ss A');
         return dateA - dateB;
     })
 }
@@ -54,6 +57,8 @@ async function updateSheets () {
     console.log('getting-sheets')
     const excel = new sheets.ArrayToGoogleSheets({ keyFilename: './serviceAccount.json' })
     const spreadsheet = await excel.getSpreadsheet("1m47rv54M4OJwezVeXTJmnDvOSL6ydgz7RF3YtjYP_o4");
+
+    // trading
     const defaultCols = [
         'Date',
         'Time',
@@ -64,6 +69,7 @@ async function updateSheets () {
         'Fee',
     ]
 
+    // earnings
     const futureCols = [
         'Date',
         'Time',
@@ -71,9 +77,15 @@ async function updateSheets () {
         'Asset',
         'Amount'
     ]
-    const binancepnl = [futureCols]
-    const binance = [defaultCols]
-    const bitkub = [defaultCols]
+
+    // const spreadsheetBinancepnl = []
+    // const spreadsheetBinance = []
+    // const spreadsheetBitkub = []
+    // const spreadsheetWallet = []
+
+    const binancepnl = []
+    const binance = []
+    const bitkub = []
 
     console.log('get future trades on binance')
     // get future trades on binance
@@ -116,9 +128,9 @@ async function updateSheets () {
     }
 
     console.log('updating-sheets')
-    await spreadsheet.updateSheet("Binance_Main", sortByDate(binance));
-    await spreadsheet.updateSheet("Bitkub_Main", sortByDate(bitkub));
-    await spreadsheet.updateSheet("Binance_PNL", sortByDate(binancepnl));
+    await spreadsheet.updateSheet("Binance_Main", [defaultCols, ...sortByDate(binance)]);
+    await spreadsheet.updateSheet("Bitkub_Main", [defaultCols, ...sortByDate(bitkub)]);
+    await spreadsheet.updateSheet("Binance_PNL", [futureCols, ...sortByDate(binancepnl)]);
     console.log('updated-sheets')
 }
 
@@ -157,7 +169,7 @@ async function tradesBinanceFuture (sym) {
             return trades
                 .map(trade => {
                     return {
-                        date: moment(trade.time).format('MM/DD/yyyy'),
+                        date: moment(trade.time).format('DD/MM/yyyy'),
                         time: moment(trade.time).format('HH:mm:ss A'),
                         type: trade.incomeType,
                         asset: trade.symbol,
@@ -177,7 +189,7 @@ async function tradesBinance (sym) {
             return trades
                 .map(trade => {
                     return {
-                        date: moment(trade.time).format('MM/DD/yyyy'),
+                        date: moment(trade.time).format('DD/MM/yyyy'),
                         time: moment(trade.time).format('HH:mm:ss A'),
                         coin: sym,
                         order: trade.isBuyer ? 'BUY' : 'SELL',
@@ -203,7 +215,7 @@ async function tradesBitkub (sym) {
                     .forEach(trade => {
                         if (!ids.includes(trade.order_id)) {
                             trades.push({
-                                date: moment(trade.date, 'YYYY-MM-DD HH:mm:ss').format('MM/DD/YYYY'),
+                                date: moment(trade.date, 'YYYY-MM-DD HH:mm:ss').format('DD/MM/YYYY'),
                                 time: moment(trade.date, 'YYYY-MM-DD HH:mm:ss').format('HH:mm:ss A'),
                                 coin: sym,
                                 order: trade.side === 'sell' ? 'SELL' : 'BUY',
@@ -237,11 +249,48 @@ async function symsBitkubGet () {
     return objects.rawValues.map((i, idx) => idx > 0 ? i[1] : '').filter(i => i != '')
 }
 
+async function walletBitkub () {
+    return clientBitkub.wallet()
+        .then(res => {
+            return res.result.THB
+        })
+}
+
+async function walletBinance () {
+    return await clientBinance.accountCoins()
+        .then(coins => {
+            const usdt = coins.find(coin => coin.coin === 'USDT')
+            return usdt.free
+        })
+}
+
+async function updateSheetWallet () {
+    const excel = new sheets.ArrayToGoogleSheets({ keyFilename: './serviceAccount.json' })
+    const spreadsheet = await excel.getSpreadsheet("1m47rv54M4OJwezVeXTJmnDvOSL6ydgz7RF3YtjYP_o4");
+    const spreadsheetWallet = await spreadsheet.findSheet('Balance').getValues()
+    console.log(spreadsheetWallet)
+    // Current data
+    const date = moment().format('DD/MM/yyyy')
+    const bitkub = await walletBitkub()
+    const binance = await walletBinance()
+    const data = [date, bitkub, binance]
+    const dataOld = spreadsheetWallet.find(da => da[0] === data[0])
+
+    if (dataOld) {
+        dataOld[1] = bitkub
+        dataOld[2] = binance
+        spreadsheetWallet.pop()
+        spreadsheetWallet.push(dataOld)
+    }
+    spreadsheet.updateSheet('Balance', spreadsheetWallet)
+}
+
 exports.api = functions.https.onRequest(app);
 exports.update_sheet = functions
     .pubsub
     .schedule('every 1 minutes')
     .onRun(async () => {
         await updateSheets()
+        await updateSheetWallet()
     })
 
