@@ -1,4 +1,6 @@
 const sheets = require('./container/sheets')
+const functions = require('firebase-functions')
+
 exports.update = functions
     .pubsub
     // change the line below to modify schedule
