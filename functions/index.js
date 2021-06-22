@@ -33,12 +33,11 @@ const clientBitkub = new Bitkub({
  */
 function sortByDate (arr) {
     return arr.sort(function compare (a, b) {
-        var dateA = moment(`${a[0]} ${a[1]}`, 'DD/MM/YYYY HH:mm:ss A');
-        var dateB = moment(`${b[0]} ${b[1]}`, 'DD/MM/YYYY HH:mm:ss A');
+        var dateA = moment(`${a[0]} ${a[1]}`, 'DD/MM/YYYY HH:mm:ss A').unix();
+        var dateB = moment(`${b[0]} ${b[1]}`, 'DD/MM/YYYY HH:mm:ss A').unix();
         return dateA - dateB;
     })
 }
-
 
 async function refreshTradeSheet () {
 
@@ -55,6 +54,7 @@ async function refreshTradeSheet () {
         'Size',
         'Price',
         'Fee',
+        'ID'
     ]
 
     const bitkubCols = [
@@ -93,6 +93,9 @@ async function refreshTradeSheet () {
             binance.push(arr)
         })
     }
+    await spreadsheet.updateSheet("Binance_Main", [])
+    await spreadsheet.updateSheet("Binance_Main", [binanceCols, ...sortByDate(binance)])
+
 
     console.log('get binance PNL')
     // get binance PNL
@@ -106,6 +109,8 @@ async function refreshTradeSheet () {
             binancepnl.push(arr)
         })
     }
+    await spreadsheet.updateSheet("Binance_PNL", [pnlCols, ...sortByDate(binancepnl)])
+
     console.log('get trades on bitkub')
     // Get trades on bitkub
     const symBitkub = await symsBitkubGet()
@@ -119,20 +124,15 @@ async function refreshTradeSheet () {
             bitkub.push(arr)
         })
     }
-
-    console.log('updating-sheets')
-    await spreadsheet.updateSheet("Binance_Main", [binanceCols, ...sortByDate(binance)])
     await spreadsheet.updateSheet("Bitkub_Main", [bitkubCols, ...sortByDate(bitkub)])
-    await spreadsheet.updateSheet("Binance_PNL", [pnlCols, ...sortByDate(binancepnl)])
-    console.log('updated-sheets')
+
 }
 
-refreshTradeSheet()
 
 async function tradesBinanceFuture (sym) {
     return clientBinance.futuresIncome({ symbol: sym })
         .then(trades => {
-            return trades
+            return sortByDate(trades
                 .map(trade => {
                     return {
                         date: moment(trade.time).format('DD/MM/yyyy'),
@@ -142,7 +142,7 @@ async function tradesBinanceFuture (sym) {
                         amount: trade.income,
                         unix: trade.time
                     }
-                })
+                }))
         })
 }
 
@@ -152,17 +152,19 @@ async function tradesBinance (sym) {
         symbol: sym
     })
         .then(trades => {
+            console.log(trades)
             return trades
                 .map(trade => {
                     return {
                         date: moment(trade.time).format('DD/MM/yyyy'),
                         time: moment(trade.time).format('HH:mm:ss A'),
                         coin: sym,
-                        order: trade.isBuyer ? 'BUY' : 'SELL',
+                        order: trade.side === 'BUY' ? 'BUY' : 'SELL',
                         size: trade.qty,
                         price: trade.price,
                         fee: trade.commission,
-                        unix: trade.time
+                        unix: trade.time,
+                        id: trade.id
                     }
                 })
         })
@@ -314,7 +316,7 @@ exports.update_sheet = functions
     .pubsub
     // change the line below to modify schedule
     // do not go over under a minute
-    .schedule('every 1 minutes')
+    .schedule('every 4 minutes')
     .onRun(async () => {
         // update the sheet for trades
         await refreshTradeSheet()
